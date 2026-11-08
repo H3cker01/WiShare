@@ -1,11 +1,13 @@
 import { handleUpload } from "@vercel/blob/client";
 import { MAX_HOURS } from "../../../lib/expiry";
+import { blobToken } from "../../../lib/blob";
 
 export async function POST(request) {
   try {
     const body = await request.json();
 
     const json = await handleUpload({
+      token: blobToken,
       body,
       request,
       onBeforeGenerateToken: async (pathname) => {

@@ -1,6 +1,7 @@
 import { put } from "@vercel/blob";
 import { cleanRoom } from "../../../lib/room";
 import { clampHours } from "../../../lib/expiry";
+import { blobToken } from "../../../lib/blob";
 
 export async function POST(request) {
   const url = new URL(request.url);
@@ -18,6 +19,7 @@ export async function POST(request) {
   try {
     const blob = await put(`rooms/${room}/${expiresAt}__${name}`, request.body, {
       access: "public",
+      token: blobToken,
       addRandomSuffix: true,
       contentType: request.headers.get("content-type") || undefined,
     });

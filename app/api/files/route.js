@@ -1,6 +1,7 @@
 import { del } from "@vercel/blob";
 import { cleanRoom } from "../../../lib/room";
 import { sweep } from "../../../lib/sweep";
+import { blobToken } from "../../../lib/blob";
 
 export async function GET(request) {
   const url = new URL(request.url);
@@ -20,6 +21,6 @@ export async function DELETE(request) {
     return Response.json({ error: "Invalid path" }, { status: 400 });
   }
 
-  await del(pathname);
+  await del(pathname, { token: blobToken });
   return Response.json({ ok: true });
 }
