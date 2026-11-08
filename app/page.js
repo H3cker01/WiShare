@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
 import { cleanRoom } from "../lib/room";
+import { clampHours, MAX_HOURS } from "../lib/expiry";
+
+const SMALL_LIMIT = 4 * 1024 * 1024;
 
 function humanSize(n) {
   if (n < 1024) return n + " B";
@@ -15,13 +18,18 @@ function humanSize(n) {
   return n.toFixed(1) + " " + units[i];
 }
 
-function fileName(pathname) {
-  return pathname.split("/").pop();
+function timeLeft(ts) {
+  const ms = ts - Date.now();
+  if (ms <= 0) return "expired";
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  return h > 0 ? h + "h " + m + "m left" : m + "m left";
 }
 
 export default function Home() {
   const [roomInput, setRoomInput] = useState("main");
   const [room, setRoom] = useState("main");
+  const [hours, setHours] = useState(4);
   const [files, setFiles] = useState([]);
   const [status, setStatus] = useState("");
   const [statusKind, setStatusKind] = useState("");
@@ -63,6 +71,8 @@ export default function Home() {
     const items = Array.from(list || []);
     if (!items.length || busy) return;
 
+    const h = clampHours(hours);
+    setHours(h);
     setBusy(true);
     try {
       for (let i = 0; i < items.length; i++) {
@@ -70,12 +80,30 @@ export default function Home() {
         const safe = f.name.replace(/[^\w.\- ()]/g, "_");
         say(`Uploading ${i + 1}/${items.length}: ${f.name}`);
         setPct(0);
-        await upload(`rooms/${room}/${safe}`, f, {
-          access: "public",
-          handleUploadUrl: "/api/blob",
-          contentType: f.type || undefined,
-          onUploadProgress: ({ percentage }) => setPct(Math.round(percentage)),
-        });
+
+        if (f.size <= SMALL_LIMIT) {
+          const res = await fetch(
+            `/api/upload?room=${encodeURIComponent(room)}&name=${encodeURIComponent(safe)}&hours=${h}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": f.type || "application/octet-stream" },
+              body: f,
+            }
+          );
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            throw new Error(j.error || "upload failed");
+          }
+          setPct(100);
+        } else {
+          const expiresAt = Date.now() + h * 3600 * 1000;
+          await upload(`rooms/${room}/${expiresAt}__${safe}`, f, {
+            access: "public",
+            handleUploadUrl: "/api/blob",
+            contentType: f.type || undefined,
+            onUploadProgress: ({ percentage }) => setPct(Math.round(percentage)),
+          });
+        }
       }
       say("Uploaded " + items.length + " file(s).", "ok");
       await load(room);
@@ -96,7 +124,7 @@ export default function Home() {
         body: JSON.stringify({ room, pathname: file.pathname }),
       });
       if (!res.ok) throw new Error("delete failed");
-      say("Deleted " + fileName(file.pathname) + ".", "ok");
+      say("Deleted " + file.name + ".", "ok");
       await load(room);
     } catch (err) {
       say("Delete failed: " + err.message, "err");
@@ -139,6 +167,29 @@ export default function Home() {
         }}
       >
         <p>Drop files here</p>
+
+        <div className="row" style={{ justifyContent: "center", marginBottom: 12 }}>
+          <span className="muted">Keep for</span>
+          <input
+            type="number"
+            min="1"
+            max={MAX_HOURS}
+            value={hours}
+            onChange={(e) => setHours(e.target.value)}
+            style={{
+              width: 90,
+              flex: "none",
+              background: "var(--panel-hi)",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              color: "var(--text)",
+              padding: "8px 10px",
+              font: "inherit",
+            }}
+          />
+          <span className="muted">hours</span>
+        </div>
+
         <button
           className="btn primary"
           disabled={busy}
@@ -181,17 +232,17 @@ export default function Home() {
               <tr>
                 <th>Name</th>
                 <th>Size</th>
-                <th>Date</th>
+                <th>Expires</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {files.map((f) => (
                 <tr key={f.pathname}>
-                  <td className="name">{fileName(f.pathname)}</td>
+                  <td className="name">{f.name}</td>
                   <td>{humanSize(f.size)}</td>
-                  <td className="muted">
-                    {new Date(f.uploadedAt).toLocaleString()}
+                  <td className="muted" title={new Date(f.expiresAt).toLocaleString()}>
+                    {timeLeft(f.expiresAt)}
                   </td>
                   <td className="actions">
                     <a className="btn" href={f.url} download>
