@@ -1,28 +1,31 @@
-import { put } from "@vercel/blob";
-import { cleanRoom } from "../../../lib/room";
-import { clampHours } from "../../../lib/expiry";
+import { handleUpload } from "@vercel/blob/client";
+import { MAX_HOURS } from "../../../lib/expiry";
 
 export async function POST(request) {
-  const url = new URL(request.url);
-  const room = cleanRoom(url.searchParams.get("room"));
-  const hours = clampHours(url.searchParams.get("hours"));
-  const name = (url.searchParams.get("name") || "file")
-    .replace(/[^\w.\- ()]/g, "_")
-    .slice(0, 150);
-  const expiresAt = Date.now() + hours * 3600 * 1000;
-
-  if (!request.body) {
-    return Response.json({ error: "No file" }, { status: 400 });
-  }
-
   try {
-    const blob = await put(`rooms/${room}/${expiresAt}__${name}`, request.body, {
-      access: "public",
-      addRandomSuffix: true,
-      contentType: request.headers.get("content-type") || undefined,
+    const body = await request.json();
+
+    const json = await handleUpload({
+      body,
+      request,
+      onBeforeGenerateToken: async (pathname) => {
+        const m = pathname.match(/^rooms\/[a-z0-9_-]+\/(\d+)__.+$/);
+        if (!m) throw new Error("Invalid path");
+        const expiresAt = Number(m[1]);
+        const now = Date.now();
+        if (expiresAt <= now || expiresAt > now + MAX_HOURS * 3600 * 1000 + 60000) {
+          throw new Error("Invalid expiry");
+        }
+        return {
+          maximumSizeInBytes: 2 * 1024 * 1024 * 1024,
+          addRandomSuffix: true,
+        };
+      },
+      onUploadCompleted: async () => {},
     });
-    return Response.json(blob);
+
+    return Response.json(json);
   } catch (err) {
-    return Response.json({ error: err.message }, { status: 500 });
+    return Response.json({ error: err.message }, { status: 400 });
   }
 }
